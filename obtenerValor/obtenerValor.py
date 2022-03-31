@@ -1,16 +1,16 @@
 from abc import abstractmethod
 import sys
-from xml.dom.pulldom import ErrorHandler
-from psutil import Error
 import requests
 import datetime
 import logging
 import psycopg2
+from re import sub
 
-logging.basicConfig(level=logging.WARNING)
+logging.basicConfig(level=logging.DEBUG)
 
 class obtenedor:
     def cotizacion(fecha,moneda):
+        print("https://api.coingecko.com/api/v3/coins/{}/history?date={}".format(moneda,fecha))
         return requests.get("https://api.coingecko.com/api/v3/coins/{}/history?date={}".format(moneda,fecha))
 
 class rangoFechas:
@@ -31,7 +31,7 @@ class administradorArchivo(administrador):
     def guardar(self,fecha,moneda,cotizacion):
         nombreArchivo = moneda+fecha+".json"
         archivo = open(nombreArchivo,'w')
-        archivo.write(cotizacion)
+        archivo.write(str(cotizacion))
 
 class administradorPostgres(administrador):
     
@@ -39,7 +39,7 @@ class administradorPostgres(administrador):
     usuario = "postgres"
     password = "mysecretpassword"
     host = "localhost"
-    puerto = "8080"
+    puerto = "5432"
     conexion = None
     cursor = None
 
@@ -71,26 +71,78 @@ class administradorPostgres(administrador):
             
             if(len(self.cursor.fetchall())==0):
             
-                self.cursor.execute("CREATE TABLE full_data( coin_id char(100), price money , date date ,json char(7000) );")
+                self.cursor.execute("CREATE TABLE full_data( coin_id char(100), date date ,price money  ,json char(7000) , primary key(coin_id, date));")
                 self.conexion.commit()
             
             self.cursor.execute(
                 "SELECT *  FROM INFORMATION_SCHEMA.TABLES\
-                WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'agregate_data';")
+                WHERE TABLE_NAME = 'agregate_data';")
             
             if(len(self.cursor.fetchall())==0):
-                self.cursor.execute("CREATE TABLE agregate_data( coin_id char(100), year int , month int , max_price money, min_price money );")
+                self.cursor.execute("CREATE TABLE agregate_data( coin_id char(100)  , year int  , month int  , max_price money, min_price money, primary key(coin_id, year, month) );")
                 self.conexion.commit()
             
                 
         except BaseException as e:
-            print(e)
+            logging.warning(e)
+            self.conexion.rollback()
 
 
     def guardar(self,fecha,moneda,cotizacion):
-        print("postgres")
+        
+        for fechaIt in cotizacion.keys():
+            logging.debug(fechaIt)
+            try:
+                self.cursor.execute("delete from full_data where coin_id='{moneda}' and date='{fecha}'".format(moneda = moneda, fecha=fechaIt))
+                precioUsd = cotizacion[fechaIt]['market_data']['current_price']['usd']
+                instruccion = "insert into full_data values('{moneda}','{fecha}',{precio},'-');".format(
+                    moneda=moneda,fecha=fechaIt, precio = round(precioUsd,2))
+                logging.debug(instruccion)
+                self.cursor.execute(instruccion)
+                self.conexion.commit()
+            
+            except BaseException as e:
+                logging.error("Data insertion at {} has failled".format(fechaIt))
+                logging.error(e)                
+                self.conexion.rollback()
 
+            try:
+                anno=fechaIt[-4:] 
+                mes=fechaIt[3:5]
+                instruccion = "select * from agregate_data where coin_id = '{moneda}' and year = {anno} and month = {mes}".format(
+                    moneda=moneda, anno=anno, mes=mes
+                )
 
+                logging.debug(instruccion)
+                self.cursor.execute(instruccion)
+                result = self.cursor.fetchall()
+                precioUsd = cotizacion[fechaIt]['market_data']['current_price']['usd']
+                logging.debug(result)
+                if(len(result)==0):
+                    instruccion = "insert into agregate_data values('{moneda}',{anno},{mes},{precio},{precio});".format(
+                        moneda = moneda, anno=anno, mes=mes, precio = precioUsd
+                    )
+                    logging.debug(instruccion)
+                    self.cursor.execute(instruccion)
+                    self.conexion.commit()
+                else:
+                    maxPrecio = float(sub(r'[^\d.]', '', result[0][3]))
+                    minPrecio = float(sub(r'[^\d.]', '', result[0][4]))
+                    if precioUsd>maxPrecio:
+                        maxPrecio = precioUsd
+                    if precioUsd<minPrecio:
+                        minPrecio = precioUsd
+                    
+                    instruccion = "update agregate_data set max_price={maxPrecio}, min_price={minPrecio} where coin_id='{moneda}' and \
+                        year={anno} and month={mes}".format(maxPrecio=maxPrecio,minPrecio = minPrecio, moneda=moneda,anno=anno, mes=mes)
+                    logging.debug(instruccion)
+                    self.cursor.execute(instruccion)
+                    self.conexion.commit()
+                    
+            except BaseException as e:
+                logging.error("Agregate data insertion at {} has failled".format(fechaIt))
+                logging.error(e)                
+                self.conexion.rollback()
 
 class recibirParametros:
     def get():
@@ -140,7 +192,7 @@ class main:
         cotizaciones = {
             fecha:obtenedor.cotizacion(fecha,moneda).json() for fecha in fechas
         }
-        admin.guardar(fechas[0]+"_to_"+fechas[-1],moneda,str(cotizaciones))
+        admin.guardar(fechas[0]+"_to_"+fechas[-1],moneda,cotizaciones)
 
 main.main()
 
