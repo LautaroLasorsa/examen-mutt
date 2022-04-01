@@ -1,3 +1,5 @@
+Esta rama es de Sandbox, la cree para poder jugar libremente con algunas cosas que me llamarón la atención sin comprometer el código que en verdad quiero entregar. Ese esta en la rama de resolución.
+
 Script: obtenerValor.py
 
 El escript recibe 1 o 2 fechas y el nombre de una moneda.
