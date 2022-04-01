@@ -5,12 +5,13 @@ import datetime
 import logging
 import psycopg2
 from re import sub
+import time
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARNING)
 
 class obtenedor:
     def cotizacion(fecha,moneda):
-        print("https://api.coingecko.com/api/v3/coins/{}/history?date={}".format(moneda,fecha))
+        logging.debug("https://api.coingecko.com/api/v3/coins/{}/history?date={}".format(moneda,fecha))
         return requests.get("https://api.coingecko.com/api/v3/coins/{}/history?date={}".format(moneda,fecha))
 
 class rangoFechas:
@@ -29,7 +30,7 @@ class administrador:
 
 class administradorArchivo(administrador):
     def guardar(self,fecha,moneda,cotizacion):
-        nombreArchivo = moneda+fecha+".json"
+        nombreArchivo = moneda+'_'+fecha+".json"
         archivo = open(nombreArchivo,'w')
         archivo.write(str(cotizacion))
 
@@ -55,7 +56,6 @@ class administradorPostgres(administrador):
             self.host = _host
         if _puerto != None:
             self.puerto = _puerto
-        print(self.password)
         self.conexion = psycopg2.connect(
             dbname = self.nombre, user = self.usuario, 
             password = self.password, host = self.host,
@@ -65,6 +65,8 @@ class administradorPostgres(administrador):
 
     def chequeoInicio(self):
         try:
+            self.cursor.execute("SET DATESTYLE to dmy;")
+
             self.cursor.execute(
             "SELECT *  FROM INFORMATION_SCHEMA.TABLES\
             WHERE TABLE_NAME = 'full_data';")
@@ -147,14 +149,13 @@ class administradorPostgres(administrador):
 class recibirParametros:
     def get():
         if(len(sys.argv)<3):
-            logging.critical("Too few params\n")
+            logging.critical("Too few params : {params}\n".format(params=sys.argv))
             exit()
         try:
             postgresi = sys.argv.index('postgres')
             admin = administradorPostgres(*sys.argv[postgresi+1:])
             sys.argv = sys.argv[:postgresi]
         except:
-            print("no aparece")
             admin = administradorArchivo()
 
         if(len(sys.argv)!=3 and len(sys.argv)!=4):
@@ -177,7 +178,7 @@ class recibirParametros:
                     logging.warning("The first date is after the second one. They were swapped\n")
                     fechaIni,fechaFin = fechaFin,fechaIni
             except:
-                print(sys.argv)
+                logging.critical(sys.argv)
                 logging.critical("The first and second arguments have to be a date\n")
                 exit()
             moneda = sys.argv[3]
@@ -188,12 +189,21 @@ class recibirParametros:
 
 class main:
     def main():
-        fechas,moneda, admin = recibirParametros.get()
-        cotizaciones = {
-            fecha:obtenedor.cotizacion(fecha,moneda).json() for fecha in fechas
-        }
-        admin.guardar(fechas[0]+"_to_"+fechas[-1],moneda,cotizaciones)
-
+        try:
+            logging.debug(sys.argv)
+            fechas,moneda, admin = recibirParametros.get()
+            cotizaciones = {}
+            i = 0
+            for fecha in fechas:
+                cotizaciones[fecha] = obtenedor.cotizacion(fecha,moneda).json()
+                i = i+1 
+                if i == 50:
+                    time.sleep(60) 
+                    #Si ya hicimos 50 llamados deja pasar un minuto para no tener problemas con la API
+                    i = 0
+            admin.guardar(fechas[0]+"_to_"+fechas[-1],moneda,cotizaciones)
+        except BaseException as e:
+            logging.critical(e)
 main.main()
 
 
