@@ -47,3 +47,17 @@ sudo docker start mi-postgres
 
 Comando recomendado para navegar dentro de la base de datos de forma manual:
 sudo docker exec -it -u postgres mi-postgres /bin/sh
+
+Contenido crontab:
+
+0 3 * * * python3 /home/ec2-user/obtenerValor/obtenerValor.py $(date +\%Y\%m\%d) bitcoin postgres
+0 3 * * * python3 /home/ec2-user/obtenerValor/obtenerValor.py $(date +\%Y\%m\%d) ethereum postgres
+0 3 * * * python3 /home/ec2-user/obtenerValor/obtenerValor.py $(date +\%Y\%m\%d) cardano postgres
+
+
+Comandos de instalación de paquetes usados:
+
+curl -O https://bootstrap.pypa.io/get-pip.py
+python3 get-pip.py
+pip install requests
+pip install psycopg2-binary
